@@ -1,4 +1,4 @@
-name: Nightly EDK2 OVMF Build
+name: Stable EDK2 OVMF Build
 
 # Credits for the base worfklow: https://github.com/osdev0/edk2-ovmf-nightly/blob/trunk/.github/workflows/nightly.yml
 on:
