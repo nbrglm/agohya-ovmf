@@ -1,0 +1,103 @@
+name: Nightly EDK2 OVMF Build
+
+# Credits for the base worfklow: https://github.com/osdev0/edk2-ovmf-nightly/blob/trunk/.github/workflows/nightly.yml
+on:
+  schedule:
+    - cron: "0 0 * * 0" # Every Sunday at midnight UTC
+  workflow_dispatch:
+
+jobs:
+  stable:
+    name: Stable EDK2 OVMF Build
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+
+    steps:
+      - name: Install dependencies
+        run: pacman --noconfirm -Syu && pacman --needed --noconfirm -S base-devel git wget python acpica nasm
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Git config
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Rebuild
+        run: |
+          set -ex
+
+          EDK_REPO_LATEST_TAG=$(git ls-remote --tags https://github.com/tianocore/edk2.git | grep 'refs/tags/edk2-stable' | sed 's/.*refs\/tags\///' | sort -V | tail -n1)
+
+          THIS_REPO_LATEST_TAG=$(git ls-remote --tags https://github.com/nbrglm/agohya-ovmf.git | grep 'refs/tags/edk2-stable' | sed 's/.*refs\/tags\///' | sort -V | tail -n1)
+
+          if [ "$EDK_REPO_LATEST_TAG" = "$THIS_REPO_LATEST_TAG" ]; then
+              echo "No new EDK2 OVMF release found. Exiting."
+              exit 1
+          else
+              echo "New EDK2 OVMF release found. Proceeding with the build."
+          fi
+
+          GCC_VERSION=14.2.0
+
+          for i in aarch64 loongarch64 riscv64; do
+              wget https://mirrors.edge.kernel.org/pub/tools/crosstool/files/bin/x86_64/$GCC_VERSION/x86_64-gcc-$GCC_VERSION-nolibc-$i-linux.tar.gz
+              tar -xf x86_64-gcc-$GCC_VERSION-nolibc-$i-linux.tar.gz
+              export PATH="$(pwd -P)"/gcc-$GCC_VERSION-nolibc/$i-linux/bin:"$PATH"
+          done
+
+          git clone --recursive --depth=1 --branch="$EDK_REPO_LATEST_TAG" https://github.com/tianocore/edk2.git
+
+          ( cd edk2 && patch -p1 <../ovmf.patch )
+
+          export PACKAGES_PATH="$(pwd -P)"/edk2
+
+          export GCC5_AARCH64_PREFIX=aarch64-linux-
+          export GCC5_LOONGARCH64_PREFIX=loongarch64-linux-
+          export GCC5_RISCV64_PREFIX=riscv64-linux-
+
+          set +e
+          . edk2/edksetup.sh
+          set -e
+          make -C edk2/BaseTools
+
+          build -b RELEASE -t GCC5 -a AARCH64 -p ArmVirtPkg/ArmVirtQemu.dsc
+          build -b RELEASE -t GCC5 -a IA32 -p OvmfPkg/OvmfPkgIa32.dsc -D FD_SIZE_2MB
+          build -b RELEASE -t GCC5 -a LOONGARCH64 -p OvmfPkg/LoongArchVirt/LoongArchVirtQemu.dsc
+          build -b RELEASE -t GCC5 -a RISCV64 -p OvmfPkg/RiscVVirt/RiscVVirtQemu.dsc
+          build -b RELEASE -t GCC5 -a X64 -p OvmfPkg/OvmfPkgX64.dsc -D FD_SIZE_2MB
+
+          mkdir -p output
+
+          cp Build/ArmVirtQemu-AARCH64/RELEASE_GCC5/FV/QEMU_EFI.fd  output/ovmf-code-aarch64.fd
+          cp Build/ArmVirtQemu-AARCH64/RELEASE_GCC5/FV/QEMU_VARS.fd output/ovmf-vars-aarch64.fd
+
+          cp Build/OvmfIa32/RELEASE_GCC5/FV/OVMF_CODE.fd output/ovmf-code-ia32.fd
+          cp Build/OvmfIa32/RELEASE_GCC5/FV/OVMF_VARS.fd output/ovmf-vars-ia32.fd
+
+          cp Build/LoongArchVirtQemu/RELEASE_GCC5/FV/QEMU_EFI.fd  output/ovmf-code-loongarch64.fd
+          cp Build/LoongArchVirtQemu/RELEASE_GCC5/FV/QEMU_VARS.fd output/ovmf-vars-loongarch64.fd
+
+          cp Build/RiscVVirtQemu/RELEASE_GCC5/FV/RISCV_VIRT_CODE.fd output/ovmf-code-riscv64.fd
+          cp Build/RiscVVirtQemu/RELEASE_GCC5/FV/RISCV_VIRT_VARS.fd output/ovmf-vars-riscv64.fd
+
+          cp Build/OvmfX64/RELEASE_GCC5/FV/OVMF_CODE.fd output/ovmf-code-x86_64.fd
+          cp Build/OvmfX64/RELEASE_GCC5/FV/OVMF_VARS.fd output/ovmf-vars-x86_64.fd
+
+          echo "EDK_REPO_LATEST_TAG=$EDK_REPO_LATEST_TAG" >> $GITHUB_ENV
+
+      - name: Set TAG_DATE variable
+        run: echo "TAG_DATE=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+
+      - name: Tag new nightly release
+        run: git tag "$EDK_REPO_LATEST_TAG" && git push --tags
+
+      - name: Create nightly release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Stable Build ${{ env.TAG_DATE }}
+          tag_name: ${{ env.EDK_REPO_LATEST_TAG }}
+          body: Images of an up to date EDK2 OVMF stable build.
+          files: |
+            output/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
