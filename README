@@ -1,9 +1,10 @@
-agohya-ovmf
+# Agohya OVMF
 =================
 
 This repository uses GitHub workflows to build stable images of EDK2 OVMF
 firmware for QEMU.
 
 See Releases.
+=================
 
-This repository is derived from (osdev0's edk2-ovmf-nightly)[https://github.com/osdev0/edk2-ovmf-nightly] repository.
+This repository is derived from [osdev0's edk2-ovmf-nightly](https://github.com/osdev0/edk2-ovmf-nightly) repository.
